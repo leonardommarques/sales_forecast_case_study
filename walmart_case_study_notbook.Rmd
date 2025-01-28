@@ -1,0 +1,342 @@
+---
+title: "Walmart Case Study"
+output: html_notebook
+---
+
+
+# Data Science Case Study: Demand Forecasting
+
+This document provides a simple case study on predicting Walmart sales across different cities and product categories.
+
+## Exploratory Data Analysis
+
+We start by exploring the data to better understand its structure, identify any inconsistencies, and uncover key patterns or trends that could help guide our approach.
+
+#### Data Handling
+```{r message=FALSE, warning=FALSE}
+require(tidyverse)
+require(purrr)
+require(reshape2)
+
+# ----------------------------------------------------------------------------- #
+`%+%` = paste0
+
+# ----------------------------------------------------------------------------- #
+MAIN_FOLDER = 'C:/Users/usr/projects/consultorias/job_tests/Shipbob-Kopius/DS-CaseStudy-SalesForecast/data/m5/datasets/'
+
+# ----------------------------------------------------------------------------- #
+
+da = read_csv(MAIN_FOLDER %+% 'calendar.csv')
+
+sales_train_validation = read_csv(MAIN_FOLDER %+% 'sales_train_validation.csv')
+sales_test_validation = read_csv(MAIN_FOLDER %+% 'sales_test_validation.csv')
+sales_test_evaluation = read_csv(MAIN_FOLDER %+% 'sales_test_evaluation.csv')
+
+
+# -------------------------------------- #
+# -- Add day index to calendar dates
+# -------------------------------------- #
+da['day_index'] = paste0('d_', 1:nrow(da))
+
+
+# -------------------------------------- #
+# -- sales wide to long
+# -------------------------------------- #
+sales_train_validation_long = melt(
+  sales_train_validation
+  , id.vars=c("item_id", "dept_id", "cat_id", "store_id", "state_id")
+  , variable.name="day_index"
+  , value.name="sales"
+)
+
+sales_test_validation_long = melt(
+  sales_test_validation
+  , id.vars=c("item_id", "dept_id", "cat_id", "store_id", "state_id")
+  , variable.name="day_index"
+  , value.name="sales"
+)
+
+sales_test_evaluation_long = melt(
+  sales_test_evaluation
+  , id.vars=c("item_id", "dept_id", "cat_id", "store_id", "state_id")
+  , variable.name="day_index"
+  , value.name="sales"
+)
+
+# -------------------------------------- #
+# -- add split description
+# -------------------------------------- #
+
+sales_train_validation_long = sales_train_validation_long %>%
+  mutate(split = 'train')
+
+sales_test_validation_long = sales_test_validation_long %>%
+  mutate(split = 'val')
+
+sales_test_evaluation_long = sales_test_evaluation_long %>%
+  mutate(split = 'test')
+
+
+sales_da = bind_rows(
+  sales_train_validation_long
+  , sales_test_validation_long
+  , sales_test_evaluation_long
+)
+
+# -------------------------------------- #
+# -- Join callendar dates
+# -------------------------------------- #
+
+demand_da = left_join(
+  sales_da
+  , da
+  , by='day_index'
+)
+
+demand_da = demand_da %>% as.tibble()
+
+
+```
+
+
+
+### Number of Unique states, departaments and categories
+
+```{r}
+
+unique_state_id = demand_da$state_id %>% unique() %>% length()
+unique_dept_id = demand_da$dept_id %>% unique() %>% length()
+unique_cat_id = demand_da$cat_id %>% unique() %>% length()
+
+cat(
+  paste('unique state_id: ', unique_state_id)
+, paste('\nunique dept_id: ', unique_dept_id)
+, paste('\nunique cat_id: ', unique_cat_id)
+)
+
+
+```
+
+#### Check Date Ranges.
+
+```{r message=FALSE, warning=FALSE}
+
+# -- Date range of items -- #
+date_rage_items = demand_da %>%
+  group_by(
+    store_id
+    , item_id
+  ) %>%
+  summarise(
+    min_date = min(date)
+    , max_date = max(date)
+    
+  )
+
+date_rage_items$min_date %>% unique()
+date_rage_items$max_date %>% unique()
+## all items have the same date rage across all stores
+
+```
+
+#### Number of events per state -- #
+All stores have the same number of events
+```{r message=FALSE, warning=FALSE}
+
+demand_da$event_name_1 %>% unique()
+events_by_store = demand_da %>%
+  group_by(
+    store_id
+  ) %>%
+  summarise(events = n_distinct(event_name_1))
+events_by_store
+
+```
+
+
+
+### Items per category and state
+
+
+
+```{r message=FALSE, warning=FALSE}
+items_dep_da = demand_da %>%
+  group_by(
+    state_id
+    , cat_id
+    # , dept_id
+  ) %>%
+  summarise(distinct_items = n_distinct(item_id))
+
+
+items_dep_da %>%
+  ggplot(aes(
+    x = cat_id
+    , y = distinct_items
+  )) + 
+  geom_bar(aes(fill = cat_id), stat = 'identity') +
+  geom_label(aes(label=distinct_items))+
+  facet_wrap(~state_id) +
+  labs(
+    title = 'Items per category and state'
+    , subtitle = 'Number of dinstinct items is the same across category and state'
+  ) +
+  coord_flip()+
+  theme(legend.position = 'bottom')
+
+
+```
+
+#### Alaysis of distribution
+```{r}
+make_barplot = function(
+  aux_da
+  , y_col
+){
+  # aux_da = demand_da
+  # y_col = 'event_type_1'
+  
+  aux_da['y_col'] = aux_da[y_col]
+  
+  # -- remove NA
+  aux_da = aux_da[!is.na(aux_da[['y_col']]), ]
+  
+
+  grouped_da = aux_da %>%
+    group_by(
+      y_col
+    ) %>%
+    summarise(count = n()) %>%
+    mutate(perc = scales::percent(count / sum(count)))
+  
+  
+  gg_aux = grouped_da %>%
+    ggplot(aes(
+      x = y_col
+      , y = count
+    )) + 
+    geom_bar(aes(fill = y_col), stat = 'identity') +
+    #geom_label(aes(label=paste0(count, '\n', perc)))+
+    geom_label(aes(label=perc))+
+    labs(
+      title = paste0('Distribution of ', y_col)
+      , fill = ''
+      , x = ''
+    )+
+    coord_flip()
+  
+  return(gg_aux)
+  
+}
+
+make_barplot(demand_da, 'event_type_1')
+
+
+```
+Most event_type_1 occurrences are either Religious or National, with both having nearly the same number of events. Cultural events occur less frequently, while Sporting events have the fewest, with about one-third the occurrences of the main categories.
+
+```{r}
+make_barplot(demand_da, 'event_name_2')
+
+```
+
+
+```{r}
+make_barplot(demand_da, 'event_type_2')
+```
+The vast majority of event_type_2 are Cultural.
+
+
+
+#### cat_id
+the category FOODS is the one that sell the most, followed by HOUSEHOLD and HOBBIES
+
+```{r}
+make_barplot(
+  demand_da %>%
+    filter(date >='2015-01-01')
+  , 'cat_id')
+```
+
+#### dept_id
+The FOODS_3 dept_id accounts for the largest number of observations. HOBBIES_1 has approximately three times the observations of HOBBIES_2, while HOUSEHOLD_1 and HOUSEHOLD_2 have nearly identical numbers of observations.
+```{r}
+make_barplot(
+  demand_da %>%
+    filter(date >='2015-01-01')
+  , 'dept_id')
+
+```
+
+#### state_id
+California has 10% more observations compared to Wisconsin and Texas, but this difference is relatively small and may not significantly impact the analysis
+```{r}
+make_barplot(
+  demand_da %>%
+    filter(date >='2015-01-01')
+  , 'state_id')
+```
+
+
+
+
+### Glance at some time series
+
+```{r}
+
+# -- glance at some time series
+store_ids = unique(demand_da$store_id)
+
+aux_da = demand_da %>% 
+  filter(item_id == demand_da$item_id[[1]]) %>%
+  # filter(store_id %in% store_ids[1:3])
+  filter(store_id == demand_da$store_id[1])
+
+
+aux_da %>% 
+  tail(200) %>%
+  ggplot(aes(
+    x = date
+    , y = cumsum(sales)
+    , col = split
+  )) +
+  geom_line() + 
+  labs(y='Cummulative sales')+
+  facet_wrap(~store_id, ncol=1)
+
+
+
+```
+
+# Save a sample
+
+```{r}
+# ------------------------------------------------------------ #
+# -- Save a sample
+# ------------------------------------------------------------ #
+
+
+unique_items = unique(demand_da$item_id)
+unique_stores = unique(demand_da$store_id)
+
+sample_items = sample(unique_items, 10)
+samples_stores = sample(unique_stores, 10)
+
+
+sample_df = demand_da %>%
+  filter(
+    (item_id %in% sample_items) &
+    (store_id %in% samples_stores)
+    )
+
+dim(sample_df)
+
+
+write.csv(sample_df, paste0(MAIN_FOLDER, 'sample_demand_da.csv'))
+
+
+
+```
+
+
+
